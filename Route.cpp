@@ -1,4 +1,4 @@
-#include "Route.h"
+/*#include "Route.h"
 #include <algorithm>
 
 Route::Route(int num, const std::string& vType, const std::list<std::string>& stopsList)
@@ -35,4 +35,4 @@ int Route::getNumber() const { return number; }
 std::string Route::getVehicleType() const { return vehicleType; }
 std::string Route::getStartStop() const { return stops.front(); }
 std::string Route::getEndStop() const { return stops.back(); }
-const std::list<std::string>& Route::getStops() const { return stops; }
+const std::list<std::string>& Route::getStops() const { return stops; }*/

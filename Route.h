@@ -1,4 +1,4 @@
-#pragma once
+/*#pragma once
 #include <string>
 #include <list>
 #include <memory>
@@ -21,4 +21,4 @@ public:
     std::string getStartStop() const;
     std::string getEndStop() const;
     const std::list<std::string>& getStops() const;
-};
+};*/

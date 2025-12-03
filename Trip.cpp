@@ -1,4 +1,4 @@
-#include "Trip.h"
+/*#include "Trip.h"
 
 Trip::Trip(int id, std::shared_ptr<Route> r, const Time& start)
     : tripId(id), route(r), startTime(start) {}
@@ -54,4 +54,4 @@ bool Trip::hasStop(const std::string& stop) const {
 
 int Trip::getTripId() const { return tripId; }
 std::shared_ptr<Route> Trip::getRoute() const { return route; }
-Time Trip::getStartTime() const { return startTime; }
+Time Trip::getStartTime() const { return startTime; }*/

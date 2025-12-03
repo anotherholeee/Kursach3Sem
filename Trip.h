@@ -1,4 +1,4 @@
-#pragma once
+/*#pragma once
 #include <memory>
 #include <map>
 #include "Route.h"
@@ -19,4 +19,4 @@ public:
     int getTripId() const;
     std::shared_ptr<Route> getRoute() const;
     Time getStartTime() const;
-};
+};*/

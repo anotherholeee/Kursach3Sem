@@ -1,4 +1,4 @@
-#include "Time.h"
+/* "Time.h"
 
 Time::Time(int h, int m) : hours(h), minutes(m) {}
 
@@ -37,4 +37,4 @@ std::ostream& operator<<(std::ostream& os, const Time& time) {
     os << (time.hours < 10 ? "0" : "") << time.hours << ":"
        << (time.minutes < 10 ? "0" : "") << time.minutes;
     return os;
-}
+}*/

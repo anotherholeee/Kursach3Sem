@@ -1,4 +1,4 @@
-#pragma once
+/*#pragma once
 #include <iostream>
 #include <string>
 #include <sstream>
@@ -16,4 +16,4 @@ public:
     bool operator<=(const Time& other) const;
     Time operator+(int minutesToAdd) const;
     friend std::ostream& operator<<(std::ostream& os, const Time& time);
-};
+};*/

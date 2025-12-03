@@ -1,4 +1,4 @@
-#pragma once
+/*#pragma once
 #include <map>
 #include <list>
 #include <memory>
@@ -21,4 +21,4 @@ public:
     std::list<std::shared_ptr<Route>> getAllRoutesList() const;
     const std::map<int, std::shared_ptr<Route>>& getRoutes() const;
     const std::map<int, std::shared_ptr<Trip>>& getTrips() const;
-};
+};*/

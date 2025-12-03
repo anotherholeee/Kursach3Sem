@@ -1,0 +1,209 @@
+@startuml
+!theme plain
+
+skinparam linetype ortho
+skinparam classRoundCorner 0
+skinparam classBorderThickness 2
+skinparam classFontName "Times New Roman"
+skinparam classFontSize 14
+skinparam classFontStyle normal
+skinparam classFontColor black
+skinparam classAttributeIconSize 0
+skinparam classBorderColor black
+skinparam classBackgroundColor white
+skinparam classArrowColor black
+skinparam classAbstractFontStyle italic
+skinparam classAbstractFontColor black
+skinparam classAbstractUnderline true
+skinparam inheritanceArrowColor black
+hide circle
+
+' Базовые классы исключений
+class TransportException {
+  - message: string
+  + TransportException(msg: string)
+  + what(): const char*
+}
+
+class Time {
+  - hours: int
+  - minutes: int
+  - normalize(totalMinutes: int): void
+  + Time(h: int = 0, m: int = 0)
+  + Time(timeStr: string)
+  + getTotalMinutes(): int
+  + operator<(other: Time): bool
+  + operator<=(other: Time): bool
+  + operator+(minutesToAdd: int): Time
+  + operator<<(os: ostream, time: Time): ostream&
+  + operator>>(is: istream, time: Time): istream&
+}
+
+' Иерархия транспортных средств
+class Vehicle {
+  # type: string
+  # model: string
+  # licensePlate: string
+  + Vehicle(t: string, m: string, lp: string)
+  + virtual ~Vehicle()
+  + getInfo(): string
+  + getType(): string
+  + getLicensePlate(): string
+}
+
+class Bus {
+  + Bus(m: string, lp: string)
+}
+
+class Tram {
+  + Tram(m: string, lp: string)
+}
+
+class Trolleybus {
+  + Trolleybus(m: string, lp: string)
+}
+
+' Класс остановки
+class Stop {
+  - id: int
+  - name: string
+  + Stop(stopId: int, stopName: string)
+  + getId(): int
+  + getName(): string
+  + operator==(other: Stop): bool
+}
+
+' Класс водителя
+class Driver {
+  - firstName: string
+  - lastName: string
+  - middleName: string
+  + Driver(fname: string, lname: string, mname: string = "")
+  + getFullName(): string
+}
+
+' Класс маршрута
+class Route {
+  - number: int
+  - vehicleType: string
+  - startStop: string
+  - endStop: string
+  - allStops: vector<string>
+  + Route(num: int, vType: string, stops: vector<string>)
+  + containsStop(stop: string): bool
+  + getStopPosition(stop: string): int
+  + isStopBefore(stopA: string, stopB: string): bool
+  + getNumber(): int
+  + getVehicleType(): string
+  + getStartStop(): string
+  + getEndStop(): string
+  + getAllStops(): const vector<string>&
+}
+
+' Класс рейса
+class Trip {
+  - tripId: int
+  - route: shared_ptr<Route>
+  - vehicle: shared_ptr<Vehicle>
+  - driver: shared_ptr<Driver>
+  - startTime: Time
+  - schedule: map<string, Time>
+  + Trip(id: int, r: shared_ptr<Route>, v: shared_ptr<Vehicle>, d: shared_ptr<Driver>, start: Time)
+  + setArrivalTime(stop: string, time: Time): void
+  + getArrivalTime(stop: string): Time
+  + hasStop(stop: string): bool
+  + getTripId(): int
+  + getRoute(): shared_ptr<Route>
+  + getVehicle(): shared_ptr<Vehicle>
+  + getDriver(): shared_ptr<Driver>
+  + getStartTime(): Time
+  + getSchedule(): const map<string, Time>&
+}
+
+' Иерархия пользователей
+class User {
+  # username: string
+  # role: string
+  + User(name: string, userRole: string)
+  + virtual ~User()
+  + getUsername(): string
+  + getRole(): string
+  + virtual hasAdminAccess(): bool
+}
+
+class Guest {
+  + Guest()
+}
+
+class Admin {
+  + Admin(name: string)
+  + hasAdminAccess(): bool
+}
+
+' Основной класс системы
+class TransportSystem {
+  - routes: vector<shared_ptr<Route>>
+  - trips: vector<shared_ptr<Trip>>
+  - vehicles: vector<shared_ptr<Vehicle>>
+  - drivers: vector<shared_ptr<Driver>>
+  - stops: vector<Stop>
+  - stopIdToName: unordered_map<int, string>
+  - adminCredentials: unordered_map<string, string>
+  + TransportSystem()
+  + authenticateAdmin(username: string, password: string): bool
+  + addAdmin(username: string, password: string): void
+  + findRoutes(stopA: string, stopB: string): vector<shared_ptr<Route>>
+  + getStopTimetable(stopId: int, startTime: Time, endTime: Time): void
+  + calculateArrivalTimes(tripId: int, averageSpeed: double): void
+  + addRoute(route: shared_ptr<Route>): void
+  + addTrip(trip: shared_ptr<Trip>): void
+  + addVehicle(vehicle: shared_ptr<Vehicle>): void
+  + addDriver(driver: shared_ptr<Driver>): void
+  + addStop(stop: Stop): void
+  + removeRoute(routeNumber: int): void
+  + removeTrip(tripId: int): void
+  + displayAllRoutes(): void
+  + displayAllTrips(): void
+  + displayAllVehicles(): void
+  + displayAllStops(): void
+  + getTrips(): const vector<shared_ptr<Trip>>&
+  + getRoutes(): const vector<shared_ptr<Route>>&
+  + getVehicles(): const vector<shared_ptr<Vehicle>>&
+  + getStops(): const vector<Stop>&
+  + getDrivers(): const vector<shared_ptr<Driver>>&
+}
+
+' Наследование транспортных средств
+Vehicle <|-- Bus
+Vehicle <|-- Tram
+Vehicle <|-- Trolleybus
+
+' Наследование пользователей
+User <|-- Guest
+User <|-- Admin
+
+' Ассоциации
+TransportSystem *-- "many" Route
+TransportSystem *-- "many" Trip
+TransportSystem *-- "many" Vehicle
+TransportSystem *-- "many" Driver
+TransportSystem *-- "many" Stop
+
+Trip *-- "1" Route
+Trip *-- "1" Vehicle
+Trip *-- "1" Driver
+Trip *-- "1" Time
+
+Route o-- "many" Stop
+
+Vehicle <.. Trip : используется в
+Driver <.. Trip : управляет
+Time <.. Trip : имеет расписание
+Stop <.. Route : содержит
+
+' Зависимости
+TransportSystem ..> TransportException
+Time ..> TransportException
+Route ..> TransportException
+
+@enduml
