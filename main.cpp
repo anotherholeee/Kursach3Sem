@@ -1,5 +1,6 @@
 #include <iostream>
 #include <windows.h>
+#include <utility>
 #include <vector>
 #include <string>
 #include <memory>
@@ -8,19 +9,21 @@
 #include <sstream>
 #include <map>
 #include <ctime>
-#include <stdexcept>
 #include <limits>
 #include <unordered_map>
 #include <set>
 #include <queue>
 #include <filesystem>
+#include <iomanip>
+
+class TransportSystem;
 
 // Базовый класс для исключений транспортной системы
 class TransportException : public std::exception {
 private:
     std::string message;
 public:
-    TransportException(const std::string& msg) : message(msg) {}
+    explicit TransportException(std::string  msg) : message(std::move(msg)) {}
     const char* what() const noexcept override { return message.c_str(); }
 };
 
@@ -29,13 +32,25 @@ private:
     int id;
     std::string name;
 public:
-    Stop(int stopId, const std::string& stopName) : id(stopId), name(stopName) {}
+    Stop(int stopId, std::string  stopName) : id(stopId), name(std::move(stopName)) {}
 
     int getId() const { return id; }
     std::string getName() const { return name; }
 
     bool operator==(const Stop& other) const {
         return id == other.id;
+    }
+
+    std::string serialize() const {
+        return std::to_string(id) + "|" + name;
+    }
+
+    static Stop deserialize(const std::string& data) {
+        std::istringstream ss(data);
+        std::string idStr, name;
+        std::getline(ss, idStr, '|');
+        std::getline(ss, name);
+        return Stop(std::stoi(idStr), name);
     }
 };
 
@@ -53,11 +68,11 @@ private:
     }
 
 public:
-    Time(int h = 0, int m = 0) {
+    explicit Time(int h = 0, int m = 0) {
         normalize(h * 60 + m);
     }
 
-    Time(const std::string& timeStr) {
+    explicit Time(const std::string& timeStr) {
         std::stringstream ss(timeStr);
         char colon;
         int h, m;
@@ -123,7 +138,21 @@ public:
         time = Time(timeStr);
         return is;
     }
+
+    std::string serialize() const {
+        return (hours < 10 ? "0" : "") + std::to_string(hours) + ":" +
+               (minutes < 10 ? "0" : "") + std::to_string(minutes);
+    }
+
+    static Time deserialize(const std::string& data) {
+        return Time(data);
+    }
 };
+
+// Вперед объявления для транспортных средств
+class Bus;
+class Tram;
+class Trolleybus;
 
 // Базовый класс для транспортного средства
 class Vehicle {
@@ -144,6 +173,22 @@ public:
     std::string getType() const { return type; }
     std::string getModel() const { return model; }
     std::string getLicensePlate() const { return licensePlate; }
+
+    virtual std::string serialize() const {
+        return type + "|" + model + "|" + licensePlate;
+    }
+
+    static std::shared_ptr<Vehicle> deserialize(const std::string& data) {
+        std::istringstream ss(data);
+        std::string type, model, licensePlate;
+        std::getline(ss, type, '|');
+        std::getline(ss, model, '|');
+        std::getline(ss, licensePlate);
+
+        // Используем фабричный метод для создания объектов
+        // Создание объектов будет выполнено в DataManager
+        throw TransportException("Используйте DataManager для создания транспортных средств");
+    }
 };
 
 // Классы конкретных транспортных средств
@@ -188,6 +233,19 @@ public:
                lastName == other.lastName &&
                middleName == other.middleName;
     }
+
+    std::string serialize() const {
+        return firstName + "|" + lastName + "|" + middleName;
+    }
+
+    static std::shared_ptr<Driver> deserialize(const std::string& data) {
+        std::istringstream ss(data);
+        std::string firstName, lastName, middleName;
+        std::getline(ss, firstName, '|');
+        std::getline(ss, lastName, '|');
+        std::getline(ss, middleName);
+        return std::make_shared<Driver>(firstName, lastName, middleName);
+    }
 };
 
 class Route {
@@ -231,9 +289,38 @@ public:
     std::string getStartStop() const { return startStop; }
     std::string getEndStop() const { return endStop; }
     const std::vector<std::string>& getAllStops() const { return allStops; }
+
+    std::string serialize() const {
+        std::string result = std::to_string(number) + "|" + vehicleType + "|";
+        for (size_t i = 0; i < allStops.size(); ++i) {
+            result += allStops[i];
+            if (i < allStops.size() - 1) result += ";";
+        }
+        return result;
+    }
+
+    static std::shared_ptr<Route> deserialize(const std::string& data) {
+        std::istringstream ss(data);
+        std::string numberStr, vehicleType, stopsStr;
+        std::getline(ss, numberStr, '|');
+        std::getline(ss, vehicleType, '|');
+        std::getline(ss, stopsStr);
+
+        std::vector<std::string> stops;
+        std::istringstream stopsStream(stopsStr);
+        std::string stop;
+        while (std::getline(stopsStream, stop, ';')) {
+            stops.push_back(stop);
+        }
+
+        return std::make_shared<Route>(std::stoi(numberStr), vehicleType, stops);
+    }
 };
 
-// Класс рейса - ПЕРЕМЕЩЕН ВЫШЕ!
+// Вперед объявление для TransportSystem
+class TransportSystem;
+
+// Класс рейса
 class Trip {
 private:
     int tripId;
@@ -275,76 +362,24 @@ public:
     Time getEstimatedEndTime() const {
         return startTime + 60; // Предполагаем 1 час для поездки
     }
-};
 
-// Теперь можно определять классы, которые используют Trip
-class Validator {
-public:
-    static bool validateRoute(const Route& route,
-                             const std::vector<Stop>& allStops) {
-        // Проверяем, что все остановки маршрута существуют
-        for (const auto& stopName : route.getAllStops()) {
-            bool stopExists = false;
-            for (const auto& stop : allStops) {
-                if (stop.getName() == stopName) {
-                    stopExists = true;
-                    break;
-                }
-            }
-            if (!stopExists) {
-                throw TransportException("Остановка '" + stopName + "' не существует в системе!");
-            }
+    std::string serialize() const {
+        std::string result = std::to_string(tripId) + "|" + route->serialize() + "|" +
+                           vehicle->serialize() + "|" + driver->serialize() + "|" +
+                           startTime.serialize() + "|";
+
+        // Сериализация расписания
+        std::string scheduleStr;
+        for (const auto& [stop, time] : schedule) {
+            scheduleStr += stop + "=" + time.serialize() + ";";
         }
+        if (!scheduleStr.empty()) scheduleStr.pop_back(); // Удаляем последнюю точку с запятой
+        result += scheduleStr;
 
-        // Проверяем корректность типа транспорта
-        static const std::set<std::string> validTypes =
-            {"Автобус", "Трамвай", "Троллейбус"};
-
-        if (validTypes.find(route.getVehicleType()) == validTypes.end()) {
-            throw TransportException("Некорректный тип транспорта: " + route.getVehicleType());
-        }
-
-        return true;
+        return result;
     }
 
-    static bool validateTrip(const Trip& newTrip,
-                            const std::vector<std::shared_ptr<Trip>>& existingTrips) {
-        // Проверяем, что транспорт не занят
-        for (const auto& existingTrip : existingTrips) {
-            if (existingTrip->getVehicle() == newTrip.getVehicle()) {
-                Time newStart = newTrip.getStartTime();
-                Time newEnd = newStart + 60; // предположим 1 час поездки
-                Time existingStart = existingTrip->getStartTime();
-                Time existingEnd = existingStart + 60;
-
-                if (!(newEnd < existingStart || newStart > existingEnd)) {
-                    throw TransportException(
-                        "Транспорт " + newTrip.getVehicle()->getLicensePlate() +
-                        " уже занят в это время рейсом " +
-                        std::to_string(existingTrip->getTripId())
-                    );
-                }
-            }
-        }
-        return true;
-    }
-
-    static bool checkForOverlappingTrips(std::shared_ptr<Vehicle> vehicle,
-                                        const Time& startTime,
-                                        const Time& endTime,
-                                        const std::vector<std::shared_ptr<Trip>>& allTrips) {
-        for (const auto& trip : allTrips) {
-            if (trip->getVehicle() == vehicle) {
-                Time tripStart = trip->getStartTime();
-                Time tripEnd = tripStart + 60;
-
-                if (!(endTime < tripStart || startTime > tripEnd)) {
-                    return false; // Найдено пересечение
-                }
-            }
-        }
-        return true;
-    }
+    static std::shared_ptr<Trip> deserialize(const std::string& data, TransportSystem* system = nullptr);
 };
 
 // Класс для хранения информации о поездке с пересадками
@@ -396,15 +431,15 @@ public:
 // Класс планировщика поездок
 class JourneyPlanner {
 private:
-    class TransportSystem* system;
+    TransportSystem* system;
 
 public:
-    JourneyPlanner(class TransportSystem* sys) : system(sys) {}
+    JourneyPlanner(TransportSystem* sys) : system(sys) {}
 
     std::vector<Journey> findJourneysWithTransfers(const std::string& startStop,
                                                    const std::string& endStop,
                                                    const Time& departureTime,
-                                                   int maxTransfers = 2);
+                                                   int maxTransfers = 2) const;
 
     Journey findFastestJourney(const std::string& startStop,
                                const std::string& endStop,
@@ -484,7 +519,7 @@ public:
     }
 };
 
-// Класс для управления данными (упрощенный, без JSON)
+// Класс для управления данными (сохранение/загрузка в текстовые файлы)
 class DataManager {
 private:
     std::string dataDirectory;
@@ -495,46 +530,26 @@ public:
         std::filesystem::create_directories(dataDirectory);
     }
 
-    // Заглушки для методов сохранения/загрузки
-    void saveAllData(class TransportSystem& system) {
-        std::cout << "Функция сохранения данных в JSON временно отключена.\n";
-        std::cout << "Данные будут сохранены при реализации JSON.\n";
-    }
+    // Сохранение всех данных в текстовые файлы
+    void saveAllData(TransportSystem& system);
 
-    void loadAllData(class TransportSystem& system) {
-        std::cout << "Функция загрузки данных из JSON временно отключена.\n";
-        std::cout << "Используются тестовые данные.\n";
-    }
-};
+    // Загрузка всех данных из текстовых файлов
+    void loadAllData(TransportSystem& system);
 
-// Класс пользователя
-class User {
-protected:
-    std::string username;
-    std::string role;
+private:
+    void saveStops(TransportSystem& system);
+    void saveVehicles(TransportSystem& system);
+    void saveDrivers(TransportSystem& system);
+    void saveRoutes(TransportSystem& system);
+    void saveTrips(TransportSystem& system);
+    void saveAdminCredentials(TransportSystem& system);
 
-public:
-    User(const std::string& name, const std::string& userRole)
-        : username(name), role(userRole) {}
-
-    virtual ~User() = default;
-
-    std::string getUsername() const { return username; }
-    std::string getRole() const { return role; }
-    virtual bool hasAdminAccess() const { return false; }
-};
-
-// Класс гостя
-class Guest : public User {
-public:
-    Guest() : User("Гость", "guest") {}
-};
-
-// Класс администратора
-class Admin : public User {
-public:
-    Admin(const std::string& name) : User(name, "admin") {}
-    bool hasAdminAccess() const override { return true; }
+    void loadStops(TransportSystem& system);
+    void loadVehicles(TransportSystem& system);
+    void loadDrivers(TransportSystem& system);
+    void loadRoutes(TransportSystem& system);
+    void loadTrips(TransportSystem& system);
+    void loadAdminCredentials(TransportSystem& system);
 };
 
 // Класс транспортной системы
@@ -551,9 +566,10 @@ private:
     // Новые компоненты
     JourneyPlanner journeyPlanner;
     DriverSchedule driverSchedule;
+    DataManager dataManager;
 
 public:
-    TransportSystem() : journeyPlanner(this) {
+    TransportSystem() : journeyPlanner(this), dataManager() {
         // Инициализация учетных данных администраторов
         adminCredentials["admin"] = "admin123";
         adminCredentials["manager"] = "manager123";
@@ -568,6 +584,16 @@ public:
     // Добавление нового администратора
     void addAdmin(const std::string& username, const std::string& password) {
         adminCredentials[username] = password;
+    }
+
+    // Сохранение данных
+    void saveData() {
+        dataManager.saveAllData(*this);
+    }
+
+    // Загрузка данных
+    void loadData() {
+        dataManager.loadAllData(*this);
     }
 
     // Функция поиска маршрутов между двумя остановками
@@ -616,7 +642,7 @@ public:
         }
     }
 
-    // Расчет времени прибытия для рейса
+    // Расчет времени прибытия для рейса - ИСПРАВЛЕННАЯ ВЕРСИЯ
     void calculateArrivalTimes(int tripId, double averageSpeed) {
         if (averageSpeed <= 0) {
             throw TransportException("Средняя скорость должна быть положительной");
@@ -652,8 +678,7 @@ public:
         std::cout << "Расписание для рейса " << tripId << " рассчитано.\n";
     }
 
-    // АДМИНИСТРАТИВНЫЕ ФУНКЦИИ С ВАЛИДАЦИЕЙ
-
+    // АДМИНИСТРАТИВНЫЕ ФУНКЦИИ
     void addRoute(std::shared_ptr<Route> route) {
         // Проверка на уникальность номера маршрута
         for (const auto& existingRoute : routes) {
@@ -661,12 +686,6 @@ public:
                 throw TransportException("Маршрут с номером " + std::to_string(route->getNumber()) + " уже существует");
             }
         }
-
-        // Валидация маршрута
-        if (!Validator::validateRoute(*route, stops)) {
-            throw TransportException("Ошибка валидации маршрута");
-        }
-
         routes.push_back(std::move(route));
     }
 
@@ -676,11 +695,6 @@ public:
             if (existingTrip->getTripId() == trip->getTripId()) {
                 throw TransportException("Рейс с ID " + std::to_string(trip->getTripId()) + " уже существует");
             }
-        }
-
-        // Валидация рейса
-        if (!Validator::validateTrip(*trip, trips)) {
-            throw TransportException("Ошибка валидации рейса");
         }
 
         // Проверка, что водитель существует
@@ -695,30 +709,6 @@ public:
                                        trip->getVehicle()) != vehicles.end();
         if (!vehicleExists) {
             throw TransportException("Транспорт не зарегистрирован в системе!");
-        }
-
-        // Проверка доступности водителя
-        if (!driverSchedule.isDriverAvailable(trip->getDriver(),
-                                             trip->getStartTime(),
-                                             trip->getEstimatedEndTime())) {
-            throw TransportException("Водитель уже занят в это время!");
-        }
-
-        // Проверка доступности транспорта
-        if (!Validator::checkForOverlappingTrips(trip->getVehicle(),
-                                                trip->getStartTime(),
-                                                trip->getEstimatedEndTime(),
-                                                trips)) {
-            throw TransportException("Транспорт уже занят в это время!");
-        }
-
-        // Назначаем рейс водителю
-        driverSchedule.assignTripToDriver(trip->getDriver(), trip);
-
-        // Проверяем рабочее время водителя
-        if (!driverSchedule.checkWorkingHoursCompliance(trip->getDriver())) {
-            driverSchedule.removeTripFromDriver(trip->getDriver(), trip->getTripId());
-            throw TransportException("Превышение рабочего времени водителя!");
         }
 
         trips.push_back(std::move(trip));
@@ -753,11 +743,6 @@ public:
         auto it = std::find_if(routes.begin(), routes.end(),
                               [routeNumber](const auto& r) { return r->getNumber() == routeNumber; });
         if (it != routes.end()) {
-            // Удаляем рейсы, связанные с этим маршрутом
-            trips.erase(std::remove_if(trips.begin(), trips.end(),
-                                     [routeNumber](const auto& t) {
-                                         return t->getRoute()->getNumber() == routeNumber;
-                                     }), trips.end());
             routes.erase(it);
             std::cout << "Маршрут " << routeNumber << " удален.\n";
         } else {
@@ -769,9 +754,6 @@ public:
         auto it = std::find_if(trips.begin(), trips.end(),
                               [tripId](const auto& t) { return t->getTripId() == tripId; });
         if (it != trips.end()) {
-            auto trip = *it;
-            // Удаляем рейс из графика водителя
-            driverSchedule.removeTripFromDriver(trip->getDriver(), tripId);
             trips.erase(it);
             std::cout << "Рейс " << tripId << " удален.\n";
         } else {
@@ -785,11 +767,6 @@ public:
         for (const auto& route : routes) {
             std::cout << "Маршрут " << route->getNumber() << " (" << route->getVehicleType()
                       << "): " << route->getStartStop() << " -> " << route->getEndStop() << "\n";
-            std::cout << "  Остановки: ";
-            for (const auto& stop : route->getAllStops()) {
-                std::cout << stop << " -> ";
-            }
-            std::cout << "конечная\n";
         }
     }
 
@@ -799,7 +776,7 @@ public:
             std::cout << "Рейс " << trip->getTripId() << ": Маршрут " << trip->getRoute()->getNumber()
                       << ", ТС: " << trip->getVehicle()->getInfo()
                       << ", Водитель: " << trip->getDriver()->getFullName()
-                      << ", Отправление: " << trip->getStartTime() << '\n';
+                      << ", Отправление: " << trip->getStartTime() << "\n";
         }
     }
 
@@ -817,53 +794,6 @@ public:
         }
     }
 
-    // Просмотр графика водителя
-    void displayDriverSchedule(const std::string& driverName) const {
-        std::cout << "\n=== ГРАФИК ВОДИТЕЛЯ ===\n";
-
-        // Ищем водителя
-        std::shared_ptr<Driver> foundDriver = nullptr;
-        for (const auto& driver : drivers) {
-            if (driver->getFullName().find(driverName) != std::string::npos) {
-                foundDriver = driver;
-                break;
-            }
-        }
-
-        if (!foundDriver) {
-            std::cout << "Водитель не найден!\n";
-            return;
-        }
-
-        auto driverTrips = driverSchedule.getDriverTrips(foundDriver);
-
-        if (driverTrips.empty()) {
-            std::cout << "У водителя " << foundDriver->getFullName()
-                      << " нет назначенных рейсов\n";
-            return;
-        }
-
-        std::cout << "Водитель: " << foundDriver->getFullName() << "\n";
-        std::cout << "Общее рабочее время: "
-                  << driverSchedule.getTotalWorkingMinutes(foundDriver)
-                  << " минут\n";
-        std::cout << "Соответствие нормам: "
-                  << (driverSchedule.checkWorkingHoursCompliance(foundDriver) ? "ДА" : "НЕТ")
-                  << "\n\nРейсы:\n";
-
-        // Сортируем рейсы по времени
-        std::sort(driverTrips.begin(), driverTrips.end(),
-                  [](const auto& a, const auto& b) {
-                      return a->getStartTime() < b->getStartTime();
-                  });
-
-        for (const auto& trip : driverTrips) {
-            std::cout << "  " << trip->getStartTime() << " - Рейс " << trip->getTripId()
-                      << " (Маршрут " << trip->getRoute()->getNumber()
-                      << ", " << trip->getVehicle()->getLicensePlate() << ")\n";
-        }
-    }
-
     // Получение всех рейсов
     const std::vector<std::shared_ptr<Trip>>& getTrips() const { return trips; }
     const std::vector<std::shared_ptr<Route>>& getRoutes() const { return routes; }
@@ -874,11 +804,6 @@ public:
     // Получение компонентов
     JourneyPlanner& getJourneyPlanner() { return journeyPlanner; }
     DriverSchedule& getDriverSchedule() { return driverSchedule; }
-
-    // Методы для DataManager (заглушки)
-    void clearAllData() {
-        // Временная заглушка
-    }
 
     // Поиск водителя по ФИО
     std::shared_ptr<Driver> findDriverByName(const std::string& firstName,
@@ -914,15 +839,6 @@ public:
         return nullptr;
     }
 
-    // Поиск остановки по имени
-    std::string findStopNameById(int id) const {
-        auto it = stopIdToName.find(id);
-        if (it != stopIdToName.end()) {
-            return it->second;
-        }
-        return "";
-    }
-
     // Получение всех рейсов через остановку
     std::vector<std::shared_ptr<Trip>> getTripsThroughStop(const std::string& stopName) const {
         std::vector<std::shared_ptr<Trip>> result;
@@ -933,14 +849,294 @@ public:
         }
         return result;
     }
+
+    // Получение остановки по ID
+    std::string getStopNameById(int id) const {
+        auto it = stopIdToName.find(id);
+        if (it != stopIdToName.end()) {
+            return it->second;
+        }
+        return "";
+    }
+
+    // Для использования в Trip::deserialize
+    friend class Trip;
 };
+
+// Реализация Trip::deserialize после определения TransportSystem
+std::shared_ptr<Trip> Trip::deserialize(const std::string& data, TransportSystem* system) {
+    std::istringstream ss(data);
+    std::string token;
+    std::vector<std::string> tokens;
+
+    while (std::getline(ss, token, '|')) {
+        tokens.push_back(token);
+    }
+
+    if (tokens.size() < 6) {
+        throw TransportException("Некорректные данные рейса");
+    }
+
+    int tripId = std::stoi(tokens[0]);
+    auto route = Route::deserialize(tokens[1]);
+
+    // Для транспортного средства ищем его в системе
+    std::shared_ptr<Vehicle> vehicle = nullptr;
+    if (system) {
+        // Извлекаем номерной знак из сериализованных данных
+        std::istringstream vehicleStream(tokens[2]);
+        std::string type, model, licensePlate;
+        std::getline(vehicleStream, type, '|');
+        std::getline(vehicleStream, model, '|');
+        std::getline(vehicleStream, licensePlate);
+
+        // Ищем транспорт в системе
+        vehicle = system->findVehicleByLicensePlate(licensePlate);
+    }
+
+    auto driver = Driver::deserialize(tokens[3]);
+    Time startTime = Time::deserialize(tokens[4]);
+
+    if (!vehicle) {
+        throw TransportException("Транспортное средство не найдено в системе");
+    }
+
+    auto trip = std::make_shared<Trip>(tripId, route, vehicle, driver, startTime);
+
+    // Десериализация расписания
+    if (!tokens[5].empty()) {
+        std::istringstream scheduleStream(tokens[5]);
+        std::string scheduleItem;
+        while (std::getline(scheduleStream, scheduleItem, ';')) {
+            size_t eqPos = scheduleItem.find('=');
+            if (eqPos != std::string::npos) {
+                std::string stop = scheduleItem.substr(0, eqPos);
+                Time time = Time::deserialize(scheduleItem.substr(eqPos + 1));
+                trip->setArrivalTime(stop, time);
+            }
+        }
+    }
+
+    return trip;
+}
+
+// Реализация методов DataManager
+void DataManager::saveAllData(TransportSystem& system) {
+    try {
+        std::cout << "Сохранение данных в текстовые файлы...\n";
+
+        saveStops(system);
+        saveVehicles(system);
+        saveDrivers(system);
+        saveRoutes(system);
+        saveTrips(system);
+        saveAdminCredentials(system);
+
+        std::cout << "Данные успешно сохранены!\n";
+    } catch (const std::exception& e) {
+        std::cout << "Ошибка при сохранении данных: " << e.what() << "\n";
+    }
+}
+
+void DataManager::loadAllData(TransportSystem& system) {
+    try {
+        std::cout << "Загрузка данных из текстовых файлов...\n";
+
+        loadStops(system);
+        loadVehicles(system);
+        loadDrivers(system);
+        loadRoutes(system);
+        loadTrips(system);
+        loadAdminCredentials(system);
+
+        std::cout << "Данные успешно загружены!\n";
+    } catch (const std::exception& e) {
+        std::cout << "Ошибка при загрузке данных: " << e.what() << "\n";
+        std::cout << "Используются тестовые данные.\n";
+    }
+}
+
+void DataManager::saveStops(TransportSystem& system) {
+    std::ofstream file(dataDirectory + "stops.txt");
+    if (!file.is_open()) throw TransportException("Не удалось открыть файл stops.txt");
+
+    const auto& stops = system.getStops();
+    for (const auto& stop : stops) {
+        file << stop.serialize() << "\n";
+    }
+    file.close();
+}
+
+void DataManager::saveVehicles(TransportSystem& system) {
+    std::ofstream file(dataDirectory + "vehicles.txt");
+    if (!file.is_open()) throw TransportException("Не удалось открыть файл vehicles.txt");
+
+    const auto& vehicles = system.getVehicles();
+    for (const auto& vehicle : vehicles) {
+        file << vehicle->serialize() << "\n";
+    }
+    file.close();
+}
+
+void DataManager::saveDrivers(TransportSystem& system) {
+    std::ofstream file(dataDirectory + "drivers.txt");
+    if (!file.is_open()) throw TransportException("Не удалось открыть файл drivers.txt");
+
+    const auto& drivers = system.getDrivers();
+    for (const auto& driver : drivers) {
+        file << driver->serialize() << "\n";
+    }
+    file.close();
+}
+
+void DataManager::saveRoutes(TransportSystem& system) {
+    std::ofstream file(dataDirectory + "routes.txt");
+    if (!file.is_open()) throw TransportException("Не удалось открыть файл routes.txt");
+
+    const auto& routes = system.getRoutes();
+    for (const auto& route : routes) {
+        file << route->serialize() << "\n";
+    }
+    file.close();
+}
+
+void DataManager::saveTrips(TransportSystem& system) {
+    std::ofstream file(dataDirectory + "trips.txt");
+    if (!file.is_open()) throw TransportException("Не удалось открыть файл trips.txt");
+
+    const auto& trips = system.getTrips();
+    for (const auto& trip : trips) {
+        file << trip->serialize() << "\n";
+    }
+    file.close();
+}
+
+void DataManager::saveAdminCredentials(TransportSystem& system) {
+    std::ofstream file(dataDirectory + "admins.txt");
+    if (!file.is_open()) throw TransportException("Не удалось открыть файл admins.txt");
+
+    file << "admin|admin123\n";
+    file << "manager|manager123\n";
+    file.close();
+}
+
+void DataManager::loadStops(TransportSystem& system) {
+    std::ifstream file(dataDirectory + "stops.txt");
+    if (!file.is_open()) return; // Файл может отсутствовать
+
+    std::string line;
+    while (std::getline(file, line)) {
+        if (!line.empty()) {
+            system.addStop(Stop::deserialize(line));
+        }
+    }
+    file.close();
+}
+
+void DataManager::loadVehicles(TransportSystem& system) {
+    std::ifstream file(dataDirectory + "vehicles.txt");
+    if (!file.is_open()) return;
+
+    std::string line;
+    while (std::getline(file, line)) {
+        if (!line.empty()) {
+            try {
+                std::istringstream ss(line);
+                std::string type, model, licensePlate;
+                std::getline(ss, type, '|');
+                std::getline(ss, model, '|');
+                std::getline(ss, licensePlate);
+
+                std::shared_ptr<Vehicle> vehicle;
+                if (type == "Автобус") {
+                    vehicle = std::make_shared<Bus>(model, licensePlate);
+                } else if (type == "Трамвай") {
+                    vehicle = std::make_shared<Tram>(model, licensePlate);
+                } else if (type == "Троллейбус") {
+                    vehicle = std::make_shared<Trolleybus>(model, licensePlate);
+                } else {
+                    throw TransportException("Неизвестный тип транспорта: " + type);
+                }
+
+                system.addVehicle(vehicle);
+            } catch (const std::exception& e) {
+                std::cout << "Ошибка загрузки транспортного средства: " << e.what() << "\n";
+            }
+        }
+    }
+    file.close();
+}
+
+void DataManager::loadDrivers(TransportSystem& system) {
+    std::ifstream file(dataDirectory + "drivers.txt");
+    if (!file.is_open()) return;
+
+    std::string line;
+    while (std::getline(file, line)) {
+        if (!line.empty()) {
+            system.addDriver(Driver::deserialize(line));
+        }
+    }
+    file.close();
+}
+
+void DataManager::loadRoutes(TransportSystem& system) {
+    std::ifstream file(dataDirectory + "routes.txt");
+    if (!file.is_open()) return;
+
+    std::string line;
+    while (std::getline(file, line)) {
+        if (!line.empty()) {
+            try {
+                system.addRoute(Route::deserialize(line));
+            } catch (const std::exception& e) {
+                std::cout << "Ошибка загрузки маршрута: " << e.what() << "\n";
+            }
+        }
+    }
+    file.close();
+}
+
+void DataManager::loadTrips(TransportSystem& system) {
+    std::ifstream file(dataDirectory + "trips.txt");
+    if (!file.is_open()) return;
+
+    std::string line;
+    while (std::getline(file, line)) {
+        if (!line.empty()) {
+            try {
+                system.addTrip(Trip::deserialize(line, &system));
+            } catch (const std::exception& e) {
+                std::cout << "Ошибка загрузки рейса: " << e.what() << "\n";
+            }
+        }
+    }
+    file.close();
+}
+
+void DataManager::loadAdminCredentials(TransportSystem& system) {
+    std::ifstream file(dataDirectory + "admins.txt");
+    if (!file.is_open()) return;
+
+    std::string line;
+    while (std::getline(file, line)) {
+        if (!line.empty()) {
+            std::istringstream ss(line);
+            std::string username, password;
+            std::getline(ss, username, '|');
+            std::getline(ss, password);
+            system.addAdmin(username, password);
+        }
+    }
+    file.close();
+}
 
 // Реализация методов JourneyPlanner
 std::vector<Journey> JourneyPlanner::findJourneysWithTransfers(
     const std::string& startStop,
     const std::string& endStop,
     const Time& departureTime,
-    int maxTransfers) {
+    int maxTransfers) const {
 
     std::vector<Journey> journeys;
 
@@ -1056,7 +1252,7 @@ Journey JourneyPlanner::findJourneyWithLeastTransfers(const std::string& startSt
     return *it;
 }
 
-// Функции для работы с пользовательским интерфейсом
+// Функции для пользовательского интерфейса
 void displayGuestMenu() {
     std::cout << "\n=== ГОСТЕВОЙ РЕЖИМ ===\n";
     std::cout << "1. Поиск маршрутов между остановками\n";
@@ -1064,7 +1260,8 @@ void displayGuestMenu() {
     std::cout << "3. Расчет времени прибытия для рейса\n";
     std::cout << "4. Поиск маршрута с пересадками\n";
     std::cout << "5. Показать все рейсы\n";
-    std::cout << "6. Выход\n";
+    std::cout << "6. Сохранить данные\n";
+    std::cout << "7. Выход\n";
     std::cout << "Выберите опцию: ";
 }
 
@@ -1083,8 +1280,8 @@ void displayAdminMenu() {
     std::cout << "10. Добавить водителя\n";
     std::cout << "11. Удалить маршрут\n";
     std::cout << "12. Удалить рейс\n";
-    std::cout << "13. Просмотр графика водителя\n";
-    std::cout << "14. Просмотр всех данных\n";
+    std::cout << "13. Просмотр всех данных\n";
+    std::cout << "14. Сохранить данные\n";
     std::cout << "15. Выход\n";
     std::cout << "Выберите опцию: ";
 }
@@ -1093,11 +1290,20 @@ void displayLoginMenu() {
     std::cout << "\n=== СИСТЕМА РАСПИСАНИЯ ГОРОДСКОГО ТРАНСПОРТА ===\n";
     std::cout << "1. Войти как администратор\n";
     std::cout << "2. Войти как гость\n";
-    std::cout << "3. Выход\n";
+    std::cout << "3. Сохранить и выйти\n";
     std::cout << "Выберите опцию: ";
 }
 
-// Функции для административных операций С ВАЛИДАЦИЕЙ
+void displayAllStopsForSelection(const TransportSystem& system) {
+    const auto& stops = system.getStops();
+    std::cout << "\n=== СПИСОК ДОСТУПНЫХ ОСТАНОВКИ ===\n";
+    for (const auto& stop : stops) {
+        std::cout << "• " << stop.getName() << " (ID: " << stop.getId() << ")\n";
+    }
+    std::cout << "=================================\n";
+}
+
+// Функции для административных операций
 void adminAddRoute(TransportSystem& system) {
     try {
         int number;
@@ -1109,17 +1315,8 @@ void adminAddRoute(TransportSystem& system) {
         std::cin >> number;
         std::cin.ignore();
 
-        // ПРОВЕРКА ВВОДА
-        if (number <= 0) {
-            throw TransportException("Номер маршрута должен быть положительным!");
-        }
-
         std::cout << "Введите тип транспорта (Автобус/Трамвай/Троллейбус): ";
         std::getline(std::cin, vehicleType);
-
-        if (vehicleType.empty()) {
-            throw TransportException("Тип транспорта не может быть пустым!");
-        }
 
         std::cout << "Введите остановки маршрута (введите 'конец' для завершения):\n";
         while (true) {
@@ -1129,22 +1326,10 @@ void adminAddRoute(TransportSystem& system) {
             stops.push_back(stop);
         }
 
-        if (stops.size() < 2) {
-            throw TransportException("Маршрут должен содержать минимум 2 остановки!");
-        }
-
-        // Проверить дубликаты остановок
-        std::set<std::string> uniqueStops(stops.begin(), stops.end());
-        if (uniqueStops.size() != stops.size()) {
-            throw TransportException("В маршруте есть повторяющиеся остановки!");
-        }
-
         auto route = std::make_shared<Route>(number, vehicleType, stops);
         system.addRoute(route);
         std::cout << "Маршрут успешно добавлен!\n";
 
-    } catch (const TransportException& e) {
-        std::cout << "Ошибка валидации: " << e.what() << '\n';
     } catch (const std::exception& e) {
         std::cout << "Ошибка: " << e.what() << '\n';
     }
@@ -1152,37 +1337,46 @@ void adminAddRoute(TransportSystem& system) {
 
 void adminAddTrip(TransportSystem& system) {
     try {
+        // Покажем доступные маршруты
+        std::cout << "\n=== ДОСТУПНЫЕ МАРШРУТЫ ===\n";
+        system.displayAllRoutes();
+        std::cout << "==========================\n\n";
+
+        // Покажем доступный транспорт
+        std::cout << "=== ДОСТУПНЫЙ ТРАНСПОРТ ===\n";
+        system.displayAllVehicles();
+        std::cout << "===========================\n\n";
+
+        // Покажем доступных водителей
+        std::cout << "=== ДОСТУПНЫЕ ВОДИТЕЛИ ===\n";
+        const auto& drivers = system.getDrivers();
+        for (size_t i = 0; i < drivers.size(); ++i) {
+            std::cout << (i+1) << ". " << drivers[i]->getFullName() << '\n';
+        }
+        std::cout << "==========================\n\n";
+
         int tripId, routeNumber;
         std::string licensePlate, driverFirstName, driverLastName, driverMiddleName, startTimeStr;
 
         std::cout << "Введите ID рейса: ";
         std::cin >> tripId;
-
-        if (tripId <= 0) {
-            throw TransportException("ID рейса должен быть положительным!");
-        }
+        std::cin.ignore();
 
         std::cout << "Введите номер маршрута: ";
         std::cin >> routeNumber;
         std::cin.ignore();
 
-        // Поиск маршрута
         auto route = system.findRouteByNumber(routeNumber);
         if (!route) {
-            throw TransportException("Маршрут с номером " + std::to_string(routeNumber) + " не найден!");
+            throw TransportException("Маршрут не найден!");
         }
 
         std::cout << "Введите номерной знак транспортного средства: ";
         std::getline(std::cin, licensePlate);
 
-        if (licensePlate.empty()) {
-            throw TransportException("Номерной знак не может быть пустым!");
-        }
-
-        // Поиск транспортного средства
         auto vehicle = system.findVehicleByLicensePlate(licensePlate);
         if (!vehicle) {
-            throw TransportException("Транспортное средство с номером " + licensePlate + " не найдено!");
+            throw TransportException("Транспортное средство не найдено!");
         }
 
         std::cout << "Введите имя водителя: ";
@@ -1192,29 +1386,19 @@ void adminAddTrip(TransportSystem& system) {
         std::cout << "Введите отчество водителя (если есть, иначе Enter): ";
         std::getline(std::cin, driverMiddleName);
 
-        if (driverFirstName.empty() || driverLastName.empty()) {
-            throw TransportException("Имя и фамилия водителя обязательны!");
-        }
-
-        // Ищем существующего водителя или создаем нового
-        std::shared_ptr<Driver> driver = system.findDriverByName(driverFirstName, driverLastName, driverMiddleName);
+        auto driver = system.findDriverByName(driverFirstName, driverLastName, driverMiddleName);
         if (!driver) {
-            driver = std::make_shared<Driver>(driverFirstName, driverLastName, driverMiddleName);
-            system.addDriver(driver);
-            std::cout << "Новый водитель добавлен в систему.\n";
+            throw TransportException("Водитель не найден!");
         }
 
         std::cout << "Введите время отправления (HH:MM): ";
         std::getline(std::cin, startTimeStr);
 
         Time startTime(startTimeStr);
-
         auto trip = std::make_shared<Trip>(tripId, route, vehicle, driver, startTime);
         system.addTrip(trip);
         std::cout << "Рейс успешно добавлен!\n";
 
-    } catch (const TransportException& e) {
-        std::cout << "Ошибка валидации: " << e.what() << '\n';
     } catch (const std::exception& e) {
         std::cout << "Ошибка: " << e.what() << '\n';
     }
@@ -1227,27 +1411,11 @@ void adminAddVehicle(TransportSystem& system) {
         std::cout << "Введите тип транспорта (Автобус/Трамвай/Троллейбус): ";
         std::getline(std::cin, type);
 
-        if (type.empty()) {
-            throw TransportException("Тип транспорта не может быть пустым!");
-        }
-
-        if (type != "Автобус" && type != "Трамвай" && type != "Троллейбус") {
-            throw TransportException("Неизвестный тип транспорта! Используйте: Автобус, Трамвай или Троллейбус");
-        }
-
         std::cout << "Введите модель: ";
         std::getline(std::cin, model);
 
-        if (model.empty()) {
-            throw TransportException("Модель не может быть пустой!");
-        }
-
         std::cout << "Введите номерной знак: ";
         std::getline(std::cin, licensePlate);
-
-        if (licensePlate.empty()) {
-            throw TransportException("Номерной знак не может быть пустым!");
-        }
 
         std::shared_ptr<Vehicle> vehicle;
         if (type == "Автобус") {
@@ -1261,8 +1429,6 @@ void adminAddVehicle(TransportSystem& system) {
         system.addVehicle(vehicle);
         std::cout << "Транспортное средство успешно добавлено!\n";
 
-    } catch (const TransportException& e) {
-        std::cout << "Ошибка валидации: " << e.what() << '\n';
     } catch (const std::exception& e) {
         std::cout << "Ошибка: " << e.what() << '\n';
     }
@@ -1277,22 +1443,12 @@ void adminAddStop(TransportSystem& system) {
         std::cin >> id;
         std::cin.ignore();
 
-        if (id <= 0) {
-            throw TransportException("ID остановки должен быть положительным!");
-        }
-
         std::cout << "Введите название остановки: ";
         std::getline(std::cin, name);
-
-        if (name.empty()) {
-            throw TransportException("Название остановки не может быть пустым!");
-        }
 
         system.addStop(Stop(id, name));
         std::cout << "Остановка успешно добавлена!\n";
 
-    } catch (const TransportException& e) {
-        std::cout << "Ошибка валидации: " << e.what() << '\n';
     } catch (const std::exception& e) {
         std::cout << "Ошибка: " << e.what() << '\n';
     }
@@ -1309,23 +1465,17 @@ void adminAddDriver(TransportSystem& system) {
         std::cout << "Введите отчество водителя (если есть, иначе Enter): ";
         std::getline(std::cin, middleName);
 
-        if (firstName.empty() || lastName.empty()) {
-            throw TransportException("Имя и фамилия водителя обязательны!");
-        }
-
         auto driver = std::make_shared<Driver>(firstName, lastName, middleName);
         system.addDriver(driver);
         std::cout << "Водитель успешно добавлен!\n";
 
-    } catch (const TransportException& e) {
-        std::cout << "Ошибка валидации: " << e.what() << '\n';
     } catch (const std::exception& e) {
         std::cout << "Ошибка: " << e.what() << '\n';
     }
 }
 
+// Инициализация тестовых данных
 void initializeTestData(TransportSystem& system) {
-    // Создаем остановки
     system.addStop(Stop(1, "Центральный вокзал"));
     system.addStop(Stop(2, "Площадь Ленина"));
     system.addStop(Stop(3, "Улица Гагарина"));
@@ -1334,7 +1484,6 @@ void initializeTestData(TransportSystem& system) {
     system.addStop(Stop(6, "Больница"));
     system.addStop(Stop(7, "Университет"));
 
-    // Создаем транспортные средства
     auto bus1 = std::make_shared<Bus>("МАЗ-203", "АН 8669-7");
     auto bus2 = std::make_shared<Bus>("ПАЗ-3205", "ВС 1234-5");
     auto tram1 = std::make_shared<Tram>("71-931", "ТР 5678-9");
@@ -1343,7 +1492,6 @@ void initializeTestData(TransportSystem& system) {
     system.addVehicle(bus2);
     system.addVehicle(tram1);
 
-    // Создаем водителей
     auto driver1 = std::make_shared<Driver>("Иван", "Петров", "Сергеевич");
     auto driver2 = std::make_shared<Driver>("Мария", "Сидорова", "Ивановна");
     auto driver3 = std::make_shared<Driver>("Алексей", "Козлов");
@@ -1352,7 +1500,6 @@ void initializeTestData(TransportSystem& system) {
     system.addDriver(driver2);
     system.addDriver(driver3);
 
-    // Создаем маршруты
     std::vector<std::string> route1Stops = {"Центральный вокзал", "Площадь Ленина", "Улица Гагарина", "Стадион"};
     auto route1 = std::make_shared<Route>(101, "Автобус", route1Stops);
 
@@ -1366,23 +1513,23 @@ void initializeTestData(TransportSystem& system) {
     system.addRoute(route2);
     system.addRoute(route3);
 
-    // Создаем рейсы
+    // Создаем тестовые рейсы
     try {
         auto trip1 = std::make_shared<Trip>(1, route1, bus1, driver1, Time("08:00"));
-        auto trip2 = std::make_shared<Trip>(2, route2, bus2, driver2, Time("08:15"));
-        auto trip3 = std::make_shared<Trip>(3, route3, tram1, driver3, Time("08:30"));
+        auto trip2 = std::make_shared<Trip>(2, route2, bus2, driver2, Time("09:00"));
+        auto trip3 = std::make_shared<Trip>(3, route3, tram1, driver3, Time("10:00"));
 
         system.addTrip(trip1);
         system.addTrip(trip2);
         system.addTrip(trip3);
 
-        // Рассчитываем время прибытия
+        // Рассчитываем время прибытия - ИСПРАВЛЕННЫЙ ВЫЗОВ
         system.calculateArrivalTimes(1, 30.0);
         system.calculateArrivalTimes(2, 30.0);
         system.calculateArrivalTimes(3, 25.0);
 
     } catch (const std::exception& e) {
-        std::cerr << "Ошибка при создании тестовых рейсов: " << e.what() << "\n";
+        std::cout << "Ошибка при создании тестовых рейсов: " << e.what() << "\n";
     }
 }
 
@@ -1390,35 +1537,51 @@ void initializeTestData(TransportSystem& system) {
 void searchRoutes(TransportSystem& system) {
     try {
         std::string stopA, stopB;
-        std::cout << "Введите начальную остановку: ";
+
+        // Показываем список остановок
+        displayAllStopsForSelection(system);
+
+        std::cout << "\nВведите начальную остановку: ";
         std::getline(std::cin, stopA);
         std::cout << "Введите конечную остановку: ";
         std::getline(std::cin, stopB);
 
         auto routes = system.findRoutes(stopA, stopB);
         std::cout << "\nНайдено маршрутов: " << routes.size() << '\n';
-        for (const auto& route : routes) {
-            std::cout << "Маршрут " << route->getNumber() << " ("
-                      << route->getVehicleType() << "): "
-                      << stopA << " -> " << stopB << '\n';
+
+        if (routes.empty()) {
+            std::cout << "Прямых маршрутов не найдено. Попробуйте поиск с пересадками.\n";
+        } else {
+            for (const auto& route : routes) {
+                std::cout << "\nМаршрут " << route->getNumber() << " ("
+                          << route->getVehicleType() << ")\n";
+                std::cout << "Весь путь: " << route->getStartStop() << " → ";
+                for (size_t i = 1; i < route->getAllStops().size() - 1; i++) {
+                    std::cout << route->getAllStops()[i] << " → ";
+                }
+                std::cout << route->getEndStop() << '\n';
+            }
         }
     } catch (const std::exception& e) {
-        std::cout << "Ошибка: " << e.what() << '\n';
+        std::cout << "Ошибка: " << e.what() << "\n";
     }
 }
 
 void viewStopTimetable(TransportSystem& system) {
     try {
+        // Показываем список остановок
+        displayAllStopsForSelection(system);
+
         int stopId;
         Time startTime, endTime;
 
-        std::cout << "Введите ID остановки: ";
+        std::cout << "\nВведите ID остановки: ";
         std::cin >> stopId;
         std::cout << "Введите начальное время (HH:MM): ";
         std::cin >> startTime;
         std::cout << "Введите конечное время (HH:MM): ";
         std::cin >> endTime;
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        std::cin.ignore();
 
         system.getStopTimetable(stopId, startTime, endTime);
     } catch (const std::exception& e) {
@@ -1426,8 +1589,26 @@ void viewStopTimetable(TransportSystem& system) {
     }
 }
 
+// Исправленная функция расчета времени прибытия
 void calculateArrivalTime(TransportSystem& system) {
     try {
+        // Покажем доступные рейсы
+        const auto& trips = system.getTrips();
+        if (trips.empty()) {
+            std::cout << "В системе нет рейсов.\n";
+            return;
+        }
+
+        std::cout << "\n=== ДОСТУПНЫЕ РЕЙСЫ ===\n";
+        for (const auto& trip : trips) {
+            std::cout << "ID: " << trip->getTripId()
+                      << " | Маршрут: " << trip->getRoute()->getNumber()
+                      << " | Отправление: " << trip->getStartTime()
+                      << " | Направление: " << trip->getRoute()->getStartStop()
+                      << " → " << trip->getRoute()->getEndStop() << '\n';
+        }
+        std::cout << "========================\n\n";
+
         int tripId;
         double speed;
 
@@ -1435,11 +1616,23 @@ void calculateArrivalTime(TransportSystem& system) {
         std::cin >> tripId;
         std::cout << "Введите среднюю скорость (км/ч): ";
         std::cin >> speed;
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        std::cin.ignore();
 
         system.calculateArrivalTimes(tripId, speed);
+
+        // Покажем обновленное расписание
+        auto tripIt = std::find_if(trips.begin(), trips.end(),
+                                  [tripId](const auto& t) { return t->getTripId() == tripId; });
+        if (tripIt != trips.end()) {
+            auto trip = *tripIt;
+            std::cout << "\nОбновленное расписание для рейса " << tripId << ":\n";
+            const auto& schedule = trip->getSchedule();
+            for (const auto& [stop, time] : schedule) {
+                std::cout << "  " << stop << " - " << time << '\n';
+            }
+        }
     } catch (const std::exception& e) {
-        std::cout << "Ошибка: " << e.what() << '\n';
+        std::cout << "Ошибка: " << e.what() << "\n";
     }
 }
 
@@ -1448,7 +1641,10 @@ void searchRoutesWithTransfers(TransportSystem& system) {
         std::string start, end;
         Time departure;
 
-        std::cout << "Откуда: ";
+        // Показываем список остановок
+        displayAllStopsForSelection(system);
+
+        std::cout << "\nОткуда: ";
         std::getline(std::cin, start);
         std::cout << "Куда: ";
         std::getline(std::cin, end);
@@ -1456,50 +1652,24 @@ void searchRoutesWithTransfers(TransportSystem& system) {
         std::cin >> departure;
         std::cin.ignore();
 
-        // Ищем маршруты
-        auto journeys = system.getJourneyPlanner().findJourneysWithTransfers(
-            start, end, departure, 2
-        );
-
+        auto journeys = system.getJourneyPlanner().findJourneysWithTransfers(start, end, departure, 2);
         if (journeys.empty()) {
             std::cout << "Маршрутов не найдено!\n";
         } else {
-            // Показываем топ-3 варианта
             std::cout << "\nНайдено " << journeys.size() << " вариантов:\n";
-
-            // 1. Самый быстрый
-            try {
-                auto fastest = system.getJourneyPlanner().findFastestJourney(start, end, departure);
-                std::cout << "\n=== САМЫЙ БЫСТРЫЙ ===\n";
-                system.getJourneyPlanner().displayJourney(fastest);
-            } catch (const std::exception& e) {
-                std::cout << "Самый быстрый маршрут не найден: " << e.what() << "\n";
+            for (size_t i = 0; i < std::min(journeys.size(), size_t(3)); i++) {
+                std::cout << "\n════════════════════════════════════════\n";
+                std::cout << "Вариант " << (i+1) << ":\n";
+                system.getJourneyPlanner().displayJourney(journeys[i]);
             }
-
-            // 2. С наименьшими пересадками
-            try {
-                auto leastTransfers = system.getJourneyPlanner().findJourneyWithLeastTransfers(start, end, departure);
-                std::cout << "\n=== МИНИМУМ ПЕРЕСАДОК ===\n";
-                system.getJourneyPlanner().displayJourney(leastTransfers);
-            } catch (const std::exception& e) {
-                std::cout << "Маршрут с минимальными пересадками не найден: " << e.what() << "\n";
-            }
-
-            // 3. Еще варианты
-            if (journeys.size() > 2) {
-                std::cout << "\n=== ДРУГИЕ ВАРИАНТЫ ===\n";
-                for (int i = 0; i < std::min(3, (int)journeys.size()); i++) {
-                    std::cout << "\nВариант " << (i+1) << ":\n";
-                    system.getJourneyPlanner().displayJourney(journeys[i]);
-                }
-            }
+            std::cout << "════════════════════════════════════════\n";
         }
     } catch (const std::exception& e) {
         std::cout << "Ошибка: " << e.what() << '\n';
     }
 }
 
-void showAllTrips(TransportSystem& system) {
+void showAllTrips(const TransportSystem& system) {
     const auto& trips = system.getTrips();
     std::cout << "\nВсе рейсы в системе:\n";
     for (const auto& trip : trips) {
@@ -1511,19 +1681,6 @@ void showAllTrips(TransportSystem& system) {
     }
 }
 
-void viewDriverSchedule(TransportSystem& system) {
-    std::string driverName;
-    std::cout << "Введите фамилию водителя (или часть фамилии): ";
-    std::getline(std::cin, driverName);
-
-    if (driverName.empty()) {
-        std::cout << "Имя водителя не может быть пустым!\n";
-        return;
-    }
-
-    system.displayDriverSchedule(driverName);
-}
-
 // Основные функции режимов работы
 void runGuestMode(TransportSystem& system) {
     int choice;
@@ -1532,7 +1689,7 @@ void runGuestMode(TransportSystem& system) {
     while (running) {
         displayGuestMenu();
         std::cin >> choice;
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        std::cin.ignore();
 
         try {
             switch (choice) {
@@ -1541,13 +1698,12 @@ void runGuestMode(TransportSystem& system) {
                 case 3: calculateArrivalTime(system); break;
                 case 4: searchRoutesWithTransfers(system); break;
                 case 5: showAllTrips(system); break;
-                case 6: running = false; break;
-                default: std::cout << "Неверный выбор. Попробуйте снова.\n";
+                case 6: system.saveData(); break;
+                case 7: running = false; break;
+                default: std::cout << "Неверный выбор.\n";
             }
-        } catch (const TransportException& e) {
-            std::cout << "Ошибка: " << e.what() << '\n';
         } catch (const std::exception& e) {
-            std::cout << "Неожиданная ошибка: " << e.what() << '\n';
+            std::cout << "Ошибка: " << e.what() << '\n';
         }
     }
 }
@@ -1565,7 +1721,7 @@ void runAdminMode(TransportSystem& system) {
         return;
     }
 
-    std::cout << "Успешный вход! Добро пожаловать, " << username << "!\n";
+    std::cout << "Успешный вход!\n";
 
     int choice;
     bool running = true;
@@ -1573,7 +1729,7 @@ void runAdminMode(TransportSystem& system) {
     while (running) {
         displayAdminMenu();
         std::cin >> choice;
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        std::cin.ignore();
 
         try {
             switch (choice) {
@@ -1603,21 +1759,19 @@ void runAdminMode(TransportSystem& system) {
                     system.removeTrip(tripId);
                     break;
                 }
-                case 13: viewDriverSchedule(system); break;
-                case 14: {
+                case 13: {
                     system.displayAllRoutes();
                     system.displayAllTrips();
                     system.displayAllVehicles();
                     system.displayAllStops();
                     break;
                 }
+                case 14: system.saveData(); break;
                 case 15: running = false; break;
-                default: std::cout << "Неверный выбор. Попробуйте снова.\n";
+                default: std::cout << "Неверный выбор.\n";
             }
-        } catch (const TransportException& e) {
-            std::cout << "Ошибка: " << e.what() << '\n';
         } catch (const std::exception& e) {
-            std::cout << "Неожиданная ошибка: " << e.what() << '\n';
+            std::cout << "Ошибка: " << e.what() << '\n';
         }
     }
 }
@@ -1626,12 +1780,17 @@ int main() {
     SetConsoleCP(CP_UTF8);
     SetConsoleOutputCP(CP_UTF8);
 
-    TransportSystem system;
-
     try {
-        // Создаем тестовые данные
-        std::cout << "Инициализация тестовых данных...\n";
-        initializeTestData(system);
+        TransportSystem system;
+
+        // Пытаемся загрузить данные из файлов
+        system.loadData();
+
+        // Если данные не загрузились, создаем тестовые данные
+        if (system.getStops().empty()) {
+            std::cout << "Создание тестовых данных...\n";
+            initializeTestData(system);
+        }
 
         int choice;
         bool running = true;
@@ -1639,16 +1798,17 @@ int main() {
         while (running) {
             displayLoginMenu();
             std::cin >> choice;
-            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            std::cin.ignore();
 
             switch (choice) {
                 case 1: runAdminMode(system); break;
                 case 2: runGuestMode(system); break;
                 case 3:
+                    system.saveData();
                     running = false;
-                    std::cout << "Выход из программы.\n";
+                    std::cout << "Данные сохранены. Выход из программы.\n";
                     break;
-                default: std::cout << "Неверный выбор. Попробуйте снова.\n";
+                default: std::cout << "Неверный выбор.\n";
             }
         }
 
